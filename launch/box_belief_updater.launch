@@ -1,0 +1,20 @@
+<!-- Launches: inventory_item_belief_updater -->
+<launch>
+    <!-- master tag is only obeyed in the top-level file (not in includes)
+    <master>
+    </master>-->
+    <arg name="drone_id_namespace"  default="drone11" />
+    <arg name="my_stack_directory" default="$(env AEROSTACK_STACK)" />
+
+    <arg name="qr_position_topic" default="qr_code_localized" />
+    	
+    <group ns="$(arg drone_id_namespace)">
+    <node name="inventory_item_belief_updater" pkg="inventory_item_belief_updater" type="inventory_item_belief_updater" output="screen">
+    	<param name="~drone_id_namespace" 		value="$(arg drone_id_namespace)"		type="str"   />
+	<param name="~my_stack_directory" 		value="$(arg my_stack_directory)" 	 	type="str"   />
+
+            <!-- Notifications -->
+	<param name="qr_position_topic" value="$(arg qr_position_topic)" type="str" />
+    </node>
+    </group>
+</launch>
