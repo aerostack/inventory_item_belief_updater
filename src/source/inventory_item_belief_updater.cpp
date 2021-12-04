@@ -1,6 +1,6 @@
 /*!*******************************************************************************************
  *  \file       inventory_item_belief_updater.cpp
- *  \brief      distance measurement implementation file.
+ *  \brief      belief updater implementation file.
  *  \details    This file contains the DistanceMeasurement implementattion of the class.
  *  \authors    Javier Melero Deza
  *  \copyright  Copyright (c) 2019 Universidad Politecnica de Madrid
@@ -44,44 +44,21 @@ InventoryItemBeliefUpdater::~InventoryItemBeliefUpdater(){
 void InventoryItemBeliefUpdater::ownSetUp(){
     ros::NodeHandle nh("~");
 
-    nh.param<std::string>("camera_topic", camera_topic_str, "camera_front/image_raw");
     nh.param<std::string>("qr_position_topic", qr_position_topic_str, "qr_code_localized");
-    nh.param<std::string>("qr_camera_topic", camera_bounding_topic_str, "bounding_image_raw");
+    nh.param<std::string>("item_annotator_topic", item_annotator_topic_str, "item_annotator");
     qr_code_localized_sub = node_handle.subscribe(qr_position_topic_str, 1, &InventoryItemBeliefUpdater::PointCallback, this);
-    camera_sub = node_handle.subscribe(camera_topic_str, 1, &InventoryItemBeliefUpdater::CameraCallback, this);
-    qr_camera_pub = node_handle.advertise<sensor_msgs::Image>(camera_bounding_topic_str, 1, true);
-
+    item_annotator_pub = node_handle.advertise<aerostack_msgs::ListOfInventoryItemAnnotation>(item_annotator_topic_str, 30, true);
     add_client = node_handle.serviceClient<belief_manager_msgs::AddBelief>("add_belief");
     remove_client = node_handle.serviceClient<belief_manager_msgs::RemoveBelief>("remove_belief");
     id_gen_client = node_handle.serviceClient<belief_manager_msgs::GenerateID>("belief_manager_process/generate_id");
     query_client = node_handle.serviceClient<belief_manager_msgs::QueryBelief>("query_belief");
 
-
     sent = false;
-    n_codes = 0;
-    unseen = 0;
 
 }
-
-void InventoryItemBeliefUpdater::CameraCallback (const sensor_msgs::ImageConstPtr &msg){
-  mtx.lock();
-  try
-  {
-    image_cv = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::RGB8);
-  }
-  catch (cv_bridge::Exception& e)
-  {
-    ROS_ERROR("cv_bridge exception: %s", e.what());
-    
-  }
-  mtx.unlock();
-  // ToDo := If mutex implementation doesn't unlock upon destruction or destruction doesn't happen
-  // when going through the catch clause, there will be a deadlock
-}
-
-
 
 void InventoryItemBeliefUpdater::PointCallback (const aerostack_msgs::ListOfQrCodeLocalized &msg){
+    aerostack_msgs::ListOfInventoryItemAnnotation annotationList;
     codes_in_frame = msg;
     bool bounding_box = false;
     std::list <std::string> qr_in_frame;
@@ -94,79 +71,64 @@ void InventoryItemBeliefUpdater::PointCallback (const aerostack_msgs::ListOfQrCo
         qr_in_frame.push_back(codes_in_frame.list_of_qr_codes[i].code);
     }
     
-      if (qr_list.size() < 8){
-        qr_list.push_back(qr_in_frame);
-    //    sendQRInterpretation(qr_in_frame, points_in_frame, true);
-        for (int i = 0; i<codes_in_frame.list_of_qr_codes.size(); i++){
-          if (codes_in_frame.list_of_qr_codes[i].code != ""){
-            bounding_box = Visible(codes_in_frame.list_of_qr_codes[i].code);
-          }
+    if (frames_list.size() < 15){
+      frames_list.push_back(qr_in_frame);
+      for (int i = 0; i<codes_in_frame.list_of_qr_codes.size(); i++){
+        if (codes_in_frame.list_of_qr_codes[i].code != ""){
+          bounding_box = Visible(codes_in_frame.list_of_qr_codes[i].code);
+        }
           
-          if (bounding_box){ // Display received bounding box
-              std::vector<cv::Point2f> points (4);
-              points[0] = cv::Point2f(codes_in_frame.list_of_qr_codes[i].bounding_points[0].x, codes_in_frame.list_of_qr_codes[i].bounding_points[0].y);
-              points[1] = cv::Point2f(codes_in_frame.list_of_qr_codes[i].bounding_points[1].x, codes_in_frame.list_of_qr_codes[i].bounding_points[1].y);
-              points[2] = cv::Point2f(codes_in_frame.list_of_qr_codes[i].bounding_points[2].x, codes_in_frame.list_of_qr_codes[i].bounding_points[2].y);
-              points[3] = cv::Point2f(codes_in_frame.list_of_qr_codes[i].bounding_points[3].x, codes_in_frame.list_of_qr_codes[i].bounding_points[3].y);
-
-              cv::RotatedRect box = cv::minAreaRect(points);
-              BoundingBox = box.boundingRect();
-              setupBeliefs(codes_in_frame.list_of_qr_codes[i].code, codes_in_frame.list_of_qr_codes[i].point);
-              cv::rectangle(image_cv->image, BoundingBox, cv::Scalar(255,255,0), 5);
-              cv::putText(image_cv->image, qrBox, cv::Point(BoundingBox.tl().x, BoundingBox.tl().y - 10), cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(255,255,0), 2);
-
-          }
-        } 
-      }
+        if (bounding_box){ // Display received bounding box
+          aerostack_msgs::InventoryItemAnnotation annotation;
+          annotation.bounding_points = codes_in_frame.list_of_qr_codes[i].bounding_points;
+          setupBeliefs(codes_in_frame.list_of_qr_codes[i].code, codes_in_frame.list_of_qr_codes[i].point);
+          annotation.object = qrBox;
+          annotationList.list_of_annotations.push_back(annotation);
+        }
+      } 
+    }
           
-      else {
+    else {
         
-        std::list<std::string> codes = qr_list.front();  
-        qr_list.pop_front();
-        qr_list.push_back(qr_in_frame);
-        std::list<std::string>::iterator codes_it = std::next(codes.begin(), 0);
-        for (int i = 0; i<codes.size(); i++){
+      std::list<std::string> codes = frames_list.front();  
+      frames_list.pop_front();
+      frames_list.push_back(qr_in_frame);
+      std::list<std::string>::iterator codes_it = std::next(codes.begin(), 0);
+      for (int i = 0; i<codes.size(); i++){
           
-          std::string code = *codes_it;
+        std::string code = *codes_it;
                   
-          if (code != "" && !Visible(code)){
-            qrBox = FindQrBoxName(std::stoi(code));
-            belief_manager_msgs::QueryBelief srv;
-            srv.request.query = "object(?x, " + qrBox + ")"; 
-            query_client.call(srv);
-            belief_manager_msgs::QueryBelief::Response response= srv.response;
-            if(response.success==true){
-              std::string str = response.substitutions;
-              qr_code_belief_id = str.substr(3);
-              removeBelief("visible(" +  qr_code_belief_id + ")");
-
-            }            
-          }
-          std::advance(codes_it, 1);
+        if (code != "" && !Visible(code)){
+          qrBox = FindQrBoxName(std::stoi(code));
+          belief_manager_msgs::QueryBelief srv;
+          srv.request.query = "object(?x, " + qrBox + ")"; 
+          query_client.call(srv);
+          belief_manager_msgs::QueryBelief::Response response= srv.response;
+          if(response.success==true){
+            std::string str = response.substitutions;
+            qr_code_belief_id = str.substr(3);
+            removeBelief("visible(" +  qr_code_belief_id + ")");
+          }            
         }
+        std::advance(codes_it, 1);
+      }
               
-        for (int i = 0; i<codes_in_frame.list_of_qr_codes.size(); i++){
-          if (codes_in_frame.list_of_qr_codes[i].code != ""){
-            bounding_box = Visible(codes_in_frame.list_of_qr_codes[i].code);
-          }
-          if (bounding_box){ // Display received bounding box
-              std::vector<cv::Point2f> points (4);
-              points[0] = cv::Point2f(codes_in_frame.list_of_qr_codes[i].bounding_points[0].x, codes_in_frame.list_of_qr_codes[i].bounding_points[0].y);
-              points[1] = cv::Point2f(codes_in_frame.list_of_qr_codes[i].bounding_points[1].x, codes_in_frame.list_of_qr_codes[i].bounding_points[1].y);
-              points[2] = cv::Point2f(codes_in_frame.list_of_qr_codes[i].bounding_points[2].x, codes_in_frame.list_of_qr_codes[i].bounding_points[2].y);
-              points[3] = cv::Point2f(codes_in_frame.list_of_qr_codes[i].bounding_points[3].x, codes_in_frame.list_of_qr_codes[i].bounding_points[3].y);
-
-              cv::RotatedRect box = cv::minAreaRect(points);
-              BoundingBox = box.boundingRect();
-              setupBeliefs(codes_in_frame.list_of_qr_codes[i].code, codes_in_frame.list_of_qr_codes[i].point);
-              cv::rectangle(image_cv->image, BoundingBox, cv::Scalar(255,255,0), 5);
-              cv::putText(image_cv->image, qrBox, cv::Point(BoundingBox.tl().x, BoundingBox.tl().y - 10), cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(255,255,0), 2);
+      for (int i = 0; i<codes_in_frame.list_of_qr_codes.size(); i++){
+        if (codes_in_frame.list_of_qr_codes[i].code != ""){
+          bounding_box = Visible(codes_in_frame.list_of_qr_codes[i].code);
+        }
+        if (bounding_box){ // Display received bounding box
+            aerostack_msgs::InventoryItemAnnotation annotation;
+            annotation.bounding_points = codes_in_frame.list_of_qr_codes[i].bounding_points;             
+            setupBeliefs(codes_in_frame.list_of_qr_codes[i].code, codes_in_frame.list_of_qr_codes[i].point);
+            annotation.object = qrBox;
+            annotationList.list_of_annotations.push_back(annotation);
               
-          }
         }
       }
-    qr_camera_pub.publish(image_cv->toImageMsg());
-  }
+    }
+  item_annotator_pub.publish(annotationList);
+}
       
 
 int InventoryItemBeliefUpdater::requestBeliefId()
@@ -180,7 +142,7 @@ int InventoryItemBeliefUpdater::requestBeliefId()
   if (res.ack)
   {
       ret = res.id;
-  }  unseen = 0;
+  }  
   return ret;
 }
 
@@ -268,25 +230,24 @@ bool InventoryItemBeliefUpdater::setupBeliefs(std::string message, geometry_msgs
   }
   return true;
 }
+
 bool InventoryItemBeliefUpdater::Visible (std::string code){
   bool ret = true;
   int c = 0;
-  std::list<std::list<std::string>>::iterator qr_in_frames_iterator = std::next(qr_list.begin(), 0);
-  for (int i = 0; i< qr_list.size(); i++){
+  std::list<std::list<std::string>>::iterator qr_in_frames_iterator = std::next(frames_list.begin(), 0);
+  for (int i = 0; i< frames_list.size(); i++){
     
     std::list<std::string> qr_in_frames = *qr_in_frames_iterator;
     
     if (!(std::find(std::begin(qr_in_frames), std::end(qr_in_frames), code) != std::end(qr_in_frames))){                   
       c++;
     }
-      if (c > 6){
+      if (c >= 10){
         ret = false;
         break;
       }
       std::advance(qr_in_frames_iterator, 1);
   }
-
-
   return ret;
 }
 

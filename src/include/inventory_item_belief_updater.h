@@ -8,7 +8,7 @@
 #include <cmath>
 #include <algorithm>
 #include <iterator>
-#include "cv.h"
+
 // ROS
 #include <ros/ros.h>
 
@@ -20,6 +20,8 @@
 #include <geometry_msgs/Point.h>
 #include <aerostack_msgs/QrCodeLocalized.h>
 #include <aerostack_msgs/ListOfQrCodeLocalized.h>
+#include <aerostack_msgs/InventoryItemAnnotation.h>
+#include <aerostack_msgs/ListOfInventoryItemAnnotation.h>
 #include "std_srvs/Empty.h"
 #include <belief_manager_msgs/AddBelief.h>
 #include <belief_manager_msgs/QueryBelief.h>
@@ -56,9 +58,9 @@ class InventoryItemBeliefUpdater : public RobotProcess
 		int code;
 		std::string box;
 	};
-	G_relation relations[20] = {{4, "Box_A"}, {9, "Box_B"},{5, "Box_C"}, {6, "Box_D"}, {30, "Box_E"},
-{3, "Box_F"}, {2, "Box_G"},{1, "Box_H"}, {8, "Box_I"},{10, "Box_J"}, {32, "Box_K"},{29, "Box_L"}, {19, "Box_M"},
-{26, "Box_N"}, {27, "Box_O"},{14, "Box_P"}, {17, "Box_Q"},{15, "Box_R"}, {12, "Box_S"}, {20, "Box_T"}};
+	G_relation relations[20] = {{4, "Box_A"}, {9, "Box_B"},{5, "Box_C"}, {6, "Nails_box"}, {30, "Box_E"},
+{3, "Box_F"}, {2, "Box_G"},{1, "Screws_box"}, {8, "Box_I"},{10, "Box_J"}, {32, "Box_K"},{29, "Box_L"}, {19, "Box_M"},
+{26, "Box_N"}, {27, "Box_O"},{14, "Hammers_box"}, {17, "Box_Q"},{15, "Box_R"}, {12, "Box_S"}, {20, "Box_T"}};
 		
 	bool sent;
 	int n_codes;
@@ -82,16 +84,18 @@ class InventoryItemBeliefUpdater : public RobotProcess
   //Congfig variables
 	std::string ing_box;
 	bool bounding_box;
-	std::list <std::list <std::string>> qr_list;
+	std::list <std::list <std::string>> frames_list;
 	std::list <std::list <geometry_msgs::Point>> points_list;
   	std::string qr_code_belief_id;
 	std::string qr_position_topic_str;
 	std::string camera_topic_str;
 	std::string camera_bounding_topic_str;
+	std::string item_annotator_topic_str;
 
 	ros::Subscriber qr_code_localized_sub;
 	ros::Subscriber camera_sub;
 	ros::Publisher qr_camera_pub;
+	ros::Publisher item_annotator_pub;
 	aerostack_msgs::ListOfQrCodeLocalized codes_in_frame;
 	cv::Rect BoundingBox;
 	std::string qrBox;
